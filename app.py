@@ -10,19 +10,12 @@ import tempfile
 import io
 import json
 import warnings
-import fitz  # PyMuPDF
+from pdf2image import convert_from_bytes, pdfinfo_from_bytes, exceptions as pdf_exceptions
 
 st.set_page_config(page_title="Legal Doc Scanner", layout="centered")
 st.title("AI-Powered Legal Document Scanner")
 
-def pdf_to_images(pdf_bytes):
-    images = []
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    for page in doc:
-        pix = page.get_pixmap(dpi=200)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        images.append(img)
-    return images
+POPPLER_PATH = "./poppler"  # Adjust this path as needed if bundling poppler manually
 
 uploaded_file = st.file_uploader("Upload Scanned Legal Document", type=['jpg', 'png', 'pdf'])
 
@@ -31,7 +24,7 @@ if uploaded_file:
 
     try:
         if uploaded_file.type == "application/pdf":
-            images = pdf_to_images(uploaded_file.read())
+            images = convert_from_bytes(uploaded_file.read(), poppler_path=POPPLER_PATH)
         else:
             file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
             image = cv2.imdecode(file_bytes, 1)
@@ -82,5 +75,7 @@ if uploaded_file:
             kv_json = json.dumps(kv_pairs, indent=2)
             st.download_button("Download Key-Value Pairs (JSON)", data=kv_json, file_name="form_fields.json", mime="application/json")
 
+    except pdf_exceptions.PDFInfoNotInstalledError:
+        st.error("Poppler is not installed. PDF processing won't work until you install Poppler utilities. On Streamlit Cloud, consider bundling Poppler binaries and set 'poppler_path'.")
     except Exception as e:
         st.error(f"An error occurred while processing the document: {str(e)}")
