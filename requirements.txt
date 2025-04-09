@@ -8,3 +8,4 @@ Pillow
 streamlit
 numpy
 gradio
+pdf2image
