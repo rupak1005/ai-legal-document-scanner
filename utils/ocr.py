@@ -1,5 +1,5 @@
 
-# --- utils/ocr.py ---
+# utils/ocr.py
 import pytesseract
 import cv2
 

@@ -1,5 +1,5 @@
 
-# --- utils/preprocess.py ---
+# utils/preprocess.py
 import cv2
 
 def load_and_preprocess(image):

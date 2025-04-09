@@ -1,28 +1,20 @@
-# --- inference.py ---
+
+# inference.py
 from transformers import LayoutLMTokenizer, LayoutLMForTokenClassification, pipeline
 from PIL import Image, ImageDraw
 import pytesseract
 import torch
+import warnings
 
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
 
-# Update the model loading code
 try:
     tokenizer = LayoutLMTokenizer.from_pretrained("microsoft/layoutlm-base-uncased")
     model = LayoutLMForTokenClassification.from_pretrained("microsoft/layoutlm-base-uncased")
+    model.eval()
 except Exception as e:
-    print(f"Error loading model: {e}")
-    # Fallback to local model
-    try:
-        tokenizer = LayoutLMTokenizer.from_pretrained("models/layoutlm")
-        model = LayoutLMForTokenClassification.from_pretrained("models/layoutlm")
-    except Exception as e:
-        print(f"Error loading local model: {e}")
-        raise
-
-model.eval()
-
-# Initialize summarizer with other model loads
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    warnings.warn(f"Failed to load LayoutLM model: {e}")
+    tokenizer, model = None, None
 
 def normalize_bbox(bbox, size):
     width, height = size
@@ -38,31 +30,37 @@ def draw_layout_entities(image_path):
     width, height = image.size
     draw = ImageDraw.Draw(image)
 
-    words, boxes = [], []
+    words = []
+    boxes = []
     ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
     for i in range(len(ocr_data['text'])):
         if int(ocr_data['conf'][i]) > 60:
             word = ocr_data['text'][i]
-            if word.strip():
-                x, y, w, h = ocr_data['left'][i], ocr_data['top'][i], ocr_data['width'][i], ocr_data['height'][i]
-                words.append(word)
-                boxes.append(normalize_bbox((x, y, x + w, y + h), (width, height)))
+            if word.strip() == "":
+                continue
+            x, y, w, h = ocr_data['left'][i], ocr_data['top'][i], ocr_data['width'][i], ocr_data['height'][i]
+            words.append(word)
+            boxes.append(normalize_bbox((x, y, x + w, y + h), (width, height)))
 
-    encoding = tokenizer(words, return_tensors="pt", truncation=True, padding=True, is_split_into_words=True)
-    outputs = model(**encoding)
-    predictions = outputs.logits.argmax(-1).squeeze().tolist()
-    labels = model.config.id2label
+    if not words or not tokenizer or not model:
+        return image
 
-    for word, box, pred in zip(words, boxes, predictions):
-        label = labels[pred]
-        if label != "O":
-            x0 = int(box[0] * width / 1000)
-            y0 = int(box[1] * height / 1000)
-            x1 = int(box[2] * width / 1000)
-            y1 = int(box[3] * height / 1000)
-            draw.rectangle([x0, y0, x1, y1], outline="red", width=2)
-            draw.text((x0, y0 - 10), label, fill="red")
+    with torch.no_grad():
+        encoding = tokenizer(words, return_tensors="pt", truncation=True, is_split_into_words=True)
+        outputs = model(**encoding)
+        predictions = outputs.logits.argmax(-1).squeeze().tolist()
+        labels = model.config.id2label
+
+        for word, box, pred in zip(words, boxes, predictions):
+            label = labels[pred]
+            if label != "O":
+                x0 = int(box[0] * width / 1000)
+                y0 = int(box[1] * height / 1000)
+                x1 = int(box[2] * width / 1000)
+                y1 = int(box[3] * height / 1000)
+                draw.rectangle([x0, y0, x1, y1], outline="red", width=2)
+                draw.text((x0, y0 - 10), label, fill="red")
 
     return image
 
@@ -70,21 +68,27 @@ def extract_entities_json(image_path):
     image = Image.open(image_path).convert("RGB")
     width, height = image.size
 
-    words, boxes = [], []
+    words = []
+    boxes = []
     ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
     for i in range(len(ocr_data['text'])):
         if int(ocr_data['conf'][i]) > 60:
             word = ocr_data['text'][i]
-            if word.strip():
-                x, y, w, h = ocr_data['left'][i], ocr_data['top'][i], ocr_data['width'][i], ocr_data['height'][i]
-                words.append(word)
-                boxes.append(normalize_bbox((x, y, x + w, y + h), (width, height)))
+            if word.strip() == "":
+                continue
+            x, y, w, h = ocr_data['left'][i], ocr_data['top'][i], ocr_data['width'][i], ocr_data['height'][i]
+            words.append(word)
+            boxes.append(normalize_bbox((x, y, x + w, y + h), (width, height)))
 
-    encoding = tokenizer(words, return_tensors="pt", truncation=True, padding=True, is_split_into_words=True)
-    outputs = model(**encoding)
-    predictions = outputs.logits.argmax(-1).squeeze().tolist()
-    labels = model.config.id2label
+    if not words or not tokenizer or not model:
+        return []
+
+    with torch.no_grad():
+        encoding = tokenizer(words, return_tensors="pt", truncation=True, is_split_into_words=True)
+        outputs = model(**encoding)
+        predictions = outputs.logits.argmax(-1).squeeze().tolist()
+        labels = model.config.id2label
 
     result = []
     for word, box, pred in zip(words, boxes, predictions):
@@ -118,8 +122,6 @@ def classify_document(text):
     return "Other"
 
 def generate_summary(text):
-    if not text.strip():
-        return "No text to summarize."
     try:
         chunks = [text[i:i+800] for i in range(0, len(text), 800)]
         summaries = summarizer(chunks, max_length=60, min_length=25, do_sample=False)
