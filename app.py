@@ -12,54 +12,64 @@ import tempfile
 import io
 import json
 import warnings
+from pdf2image import convert_from_bytes
 
 st.set_page_config(page_title="Legal Doc Scanner", layout="centered")
 st.title("AI-Powered Legal Document Scanner")
 
-uploaded_file = st.file_uploader("Upload a scanned legal document", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload Scanned Legal Document", type=['jpg', 'png', 'pdf'])
 
 if uploaded_file:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, 1)
-    grayscale = load_and_preprocess(image)
+    images = []
 
-    text = extract_text(grayscale)
-    image_with_boxes = draw_text_boxes(image.copy())
+    if uploaded_file.type == "application/pdf":
+        images = convert_from_bytes(uploaded_file.read())
+    else:
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, 1)
+        images = [Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))]
 
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        cv2.imwrite(tmp.name, image)
-        entity_img = draw_layout_entities(tmp.name)
-        entity_data = extract_entities_json(tmp.name)
-        kv_pairs = extract_key_value_pairs(tmp.name)
+    for pil_img in images:
+        image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        grayscale = load_and_preprocess(image)
 
-    layout = analyze_layout(uploaded_file)
-    doc_type = classify_document(text)
-    summary = generate_summary(text)
+        text = extract_text(grayscale)
+        image_with_boxes = draw_text_boxes(image.copy())
 
-    st.image(image_with_boxes, caption="Text Detection",  use_container_width =True, channels="BGR")
-    st.image(entity_img, caption="Entity Labeling (LayoutLM)",  use_container_width =True)
-    st.subheader(f"Document Type: {doc_type}")
-    st.subheader("Extracted Text")
-    st.text(text)
-    st.subheader("Layout Analysis")
-    st.text(layout)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            cv2.imwrite(tmp.name, image)
+            entity_img = draw_layout_entities(tmp.name)
+            entity_data = extract_entities_json(tmp.name)
+            kv_pairs = extract_key_value_pairs(tmp.name)
 
-    st.subheader("Detected Form Fields")
-    for kv in kv_pairs:
-        st.markdown(f"**{kv['key']}**: {kv['value']}")
+        layout = analyze_layout(uploaded_file)
+        doc_type = classify_document(text)
+        summary = generate_summary(text)
 
-    st.subheader("Document Summary")
-    st.markdown(summary)
+        st.image(image_with_boxes, caption="Text Detection",  use_container_width=True, channels="BGR")
+        st.image(entity_img, caption="Entity Labeling (LayoutLM)",  use_container_width=True)
+        st.subheader(f"Document Type: {doc_type}")
+        st.subheader("Extracted Text")
+        st.text(text)
+        st.subheader("Layout Analysis")
+        st.text(layout)
 
-    buf = io.BytesIO()
-    entity_img.save(buf, format="PNG")
-    byte_im = buf.getvalue()
-    st.download_button("Download Labeled Image", data=byte_im, file_name="labeled_entity_image.png", mime="image/png")
+        st.subheader("Detected Form Fields")
+        for kv in kv_pairs:
+            st.markdown(f"**{kv['key']}**: {kv['value']}")
 
-    st.download_button("Download Extracted Text", data=text, file_name="extracted_text.txt", mime="text/plain")
+        st.subheader("Document Summary")
+        st.markdown(summary)
 
-    json_str = json.dumps(entity_data, indent=2)
-    st.download_button("Download Key-Value Entities (JSON)", data=json_str, file_name="entities.json", mime="application/json")
+        buf = io.BytesIO()
+        entity_img.save(buf, format="PNG")
+        byte_im = buf.getvalue()
+        st.download_button("Download Labeled Image", data=byte_im, file_name="labeled_entity_image.png", mime="image/png")
 
-    kv_json = json.dumps(kv_pairs, indent=2)
-    st.download_button("Download Key-Value Pairs (JSON)", data=kv_json, file_name="form_fields.json", mime="application/json")
+        st.download_button("Download Extracted Text", data=text, file_name="extracted_text.txt", mime="text/plain")
+
+        json_str = json.dumps(entity_data, indent=2)
+        st.download_button("Download Key-Value Entities (JSON)", data=json_str, file_name="entities.json", mime="application/json")
+
+        kv_json = json.dumps(kv_pairs, indent=2)
+        st.download_button("Download Key-Value Pairs (JSON)", data=kv_json, file_name="form_fields.json", mime="application/json")
